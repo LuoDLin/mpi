@@ -7,14 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <dirent.h>
 #define	 DISCRETE_FILTER_SIZE	1024
-#define  LOWPASS_FILTR_LENGTH	4.00000f
+#define  LOWPASS_FILTR_LENGTH	8.00000f
 #define	 LINE_SQUARE_CLIP_MAX	100000.0f
 #define	 VECTOR_COMPONENT_MIN   0.050000f
 
 
-void     ReadVector(char* fileName,int xres, int yres, float*  pVectr, int* pVectrFlag);
+void     ReadVector(int xres, int yres, float*  pVectr, int* pVectrFlag);
 void	 NormalizVectrs(int  n_xres,  int     n_yres,  float*   pVectr);
 void     GenBoxFiltrLUT(int  LUTsiz,  float*  p_LUT0,  float*   p_LUT1);
 void     MakeWhiteNoise(int  n_xres,  int     n_yres,  unsigned char*  pNoise);
@@ -28,7 +27,6 @@ int	main(int argc, char **argv)
     clock_t start,end;
     start = clock();
 
-
     float left = -180, right = 179.75, low =-80, high = 79.75;
     float res=0.25;
     int				n_xres = (right-left)/res+1;
@@ -36,86 +34,52 @@ int	main(int argc, char **argv)
 
     float*			pVectr = (float*         ) malloc( sizeof(float        ) * n_xres * n_yres * 2 );
     // int*			pVectrFlag = (int*       ) malloc( sizeof(int          ) * n_xres * n_yres * 2 );
-    // malloc 未初始化值 -- pVectrFlag 的默认值应该为0
-    int*			pVectrFlag = (int*       ) calloc( sizeof(int          ) , n_xres * n_yres * 2 );
+    int*			pVectrFlag = (int*       ) calloc( sizeof(int          ) , n_xres * n_yres * 2 );    //malloc 不初始化内存，pVectrFlag
     float*			p_LUT0 = (float*		 ) malloc( sizeof(float        ) * DISCRETE_FILTER_SIZE);
     float*			p_LUT1 = (float*		 ) malloc( sizeof(float        ) * DISCRETE_FILTER_SIZE);
     unsigned char*	pNoise = (unsigned char* ) malloc( sizeof(unsigned char) * n_xres * n_yres     );
     unsigned char*	pImage = (unsigned char* ) malloc( sizeof(unsigned char) * n_xres * n_yres     );
 
-    DIR *dir;
-    struct dirent *entry;
-    char inputFilePath[64] = {0};
-    char outputFilePath[64] = {0};
-    // 打开指定文件夹
-    dir = opendir("data");
-    if (dir == NULL) {
-        printf("无法打开文件夹\n");
-        return 1;
-    }
+    ReadVector(n_xres, n_yres, pVectr, pVectrFlag);
+    NormalizVectrs(n_xres, n_yres, pVectr);
+    MakeWhiteNoise(n_xres, n_yres, pNoise);
+    GenBoxFiltrLUT(DISCRETE_FILTER_SIZE, p_LUT0, p_LUT1);
+    FlowImagingLIC(n_xres, n_yres, pVectr, pNoise, pImage, p_LUT0, p_LUT1, LOWPASS_FILTR_LENGTH);
+    WriteImage2PPM(n_xres, n_yres, pVectrFlag, pImage, "LIC.ppm");
 
-    while ((entry = readdir(dir)) != NULL) {
-        // printf("reclen：%d  name:%s\n", entry->d_reclen,entry->d_name);
-        if( entry->d_name[0] == '.' ){
-            continue;
-        }
-        sprintf(inputFilePath, "./data/%s",entry->d_name);
-        sprintf(outputFilePath, "./output/%s.ppm",entry->d_name);
-
-        ReadVector(inputFilePath,n_xres, n_yres, pVectr, pVectrFlag);
-        // printf("开始计算\n");
-        NormalizVectrs(n_xres, n_yres, pVectr);
-        MakeWhiteNoise(n_xres, n_yres, pNoise);
-        GenBoxFiltrLUT(DISCRETE_FILTER_SIZE, p_LUT0, p_LUT1);
-        FlowImagingLIC(n_xres, n_yres, pVectr, pNoise, pImage, p_LUT0, p_LUT1, LOWPASS_FILTR_LENGTH);
-        // printf("计算完成");
-        WriteImage2PPM(n_xres, n_yres, pVectrFlag, pImage, outputFilePath);
-    }
     free(pVectr);	pVectr = NULL;
     free(p_LUT0);	p_LUT0 = NULL;
     free(p_LUT1);	p_LUT1 = NULL;
     free(pNoise);	pNoise = NULL;
     free(pImage);	pImage = NULL;
-    closedir(dir);
+
     end = clock();
     printf("time=%f\n",(double)(end-start)/1000000);
     return 0;
 }
 
 
-///		synthesize a saddle-shaped vector field     ///
-//void	SyntheszSaddle(int  n_xres,  int  n_yres,  float*  pVectr)
-//{
-//    for(int  j = 0;  j < n_yres;  j ++)
-//        for(int  i = 0;  i < n_xres;  i ++)
-//        {
-//            int	 index = (  (n_yres - 1 - j) * n_xres + i  )  <<  1;
-//            pVectr[index    ] = - ( j / (n_yres - 1.0f) - 0.5f );
-//            pVectr[index + 1] =     i / (n_xres - 1.0f) - 0.5f;
-//        }
-//}
-
 
 
 ///		read the vector field     ///
-void ReadVector(char* fileName,int xres, int yres, float*  pVectr, int* pVectrFlag) {
+void ReadVector(int xres, int yres, float*  pVectr, int* pVectrFlag) {
     FILE *fp;
-    if ((fp = fopen(fileName, "r")) == NULL) {
-        printf("error in reading file !:%s\n",fileName);
+    if ((fp = fopen("fielddataglobal.txt", "r")) == NULL) {
+        printf("error in reading file !\n");
         exit(1);
     }
     float f1, f2, f3, f4;
     int index = 0;
     while (!feof(fp)) {
-        if (fscanf(fp, "%f,%f,%f,%f", &f1, &f2, &f3, &f4) == EOF){
+        if (fscanf(fp, "%f %f %f %f", &f1, &f2, &f3, &f4) == EOF)
             break;
-        }
-        // printf( "%d %f %f %f %f \n", index,f1, f2, f3, f4);
+        //printf( "%f %f %f %f \n", f1, f2, f3, f4);
         pVectr[index] = f3;
         if((int)(f3-9999)==0){
             pVectrFlag[index] = 1;
         }
         index++;
+
         pVectr[index] = f4;
         if((int)(f4-9999)==0){
             pVectrFlag[index] = 1;
@@ -198,7 +162,7 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
 {
     int		vec_id;						///ID in the VECtor buffer (for the input flow field)
     int		advDir;						///ADVection DIRection (0: positive;  1: negative)
-    int		advcts;						///计步器
+    int		advcts;						///number of ADVeCTion stepS per direction (a step counter)
     int		ADVCTS = (int)(krnlen * 3);	///MAXIMUM number of advection steps per direction to break dead loops
 
     float	vctr_x;						///x-component  of the VeCToR at the forefront point
@@ -210,8 +174,8 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
     float	samp_x;						///x-coordinate of the SAMPle in the current pixel
     float	samp_y;						///y-coordinate of the SAMPle in the current pixel
     float	tmpLen;						///TeMPorary LENgth of a trial clipped-segment
-    float	segLen;						///每一段长度
-    float	curLen;						///当前流线长度
+    float	segLen;						///SEGment   LENgth
+    float	curLen;						///CURrent   LENgth of the streamline
     float	prvLen;						///PReVious  LENgth of the streamline
     float	W_ACUM;						///ACcuMulated Weight from the seed to the current streamline forefront
     float	texVal;						///TEXture VALue
@@ -241,15 +205,14 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
                 wgtLUT = (advDir == 0) ? p_LUT0 : p_LUT1;
 
                 ///until the streamline is advected long enough or a tightly  spiralling center / focus is encountered///
-                /// krnlen: 最大流线长度  ---- ADVCTS：最大步数暂时为：krnlen*3
                 while( curLen < krnlen && advcts < ADVCTS )
                 {
-                    ///访问样本中的向量///
+                    ///access the vector at the sample///
                     vec_id = ( (int)(clp0_y) * n_xres + (int)(clp0_x) )<<1;
                     vctr_x = pVectr[vec_id    ];
                     vctr_y = pVectr[vec_id + 1];
 
-                    ///临界点情况///
+                    ///in case of a critical point///
                     if( vctr_x == 0.0f && vctr_y == 0.0f )
                     {
                         t_acum[advDir] = (advcts == 0) ? 0.0f : t_acum[advDir];		   ///this line is indeed unnecessary
@@ -263,29 +226,6 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
 
                     ///clip the segment against the pixel boundaries --- find the shorter from the two clipped segments///
                     ///replace  all  if-statements  whenever  possible  as  they  might  affect the computational speed///
-                    // #define	 DISCRETE_FILTER_SIZE	1024
-                    // #define  LOWPASS_FILTR_LENGTH	8.00000f
-                    // #define	 LINE_SQUARE_CLIP_MAX	100000.0f
-                    // #define	 VECTOR_COMPONENT_MIN   0.050000f
-
-                    // segLen = LINE_SQUARE_CLIP_MAX;
-                    // if(vctr_x < -VECTOR_COMPONENT_MIN){
-                    //     segLen = ((int)(clp0_x)-clp0_x)/vctr_x;
-                    // }
-                    // if(vctr_x >  VECTOR_COMPONENT_MIN){
-                    //     segLen = ( (int)((int)(clp0_x)+1.5f)-clp0_x)/vctr_x;
-                    // }
-                    // if(vctr_y < -VECTOR_COMPONENT_MIN){
-                    //     if((tmpLen = ((int)(clp0_y)-clp0_y)/vctr_y)<segLen){
-                    //         segLen = tmpLen;
-                    //     }
-                    // }
-                    // if(vctr_y >  VECTOR_COMPONENT_MIN){
-                    //     if((tmpLen = ((int)((int)(clp0_y) + 1.5f )-clp0_y)/vctr_y)<segLen ){
-                    //         segLen = tmpLen;
-                    //     }
-                    // }
-
                     segLen = LINE_SQUARE_CLIP_MAX;
                     segLen = (vctr_x < -VECTOR_COMPONENT_MIN) ? ( (int)(     clp0_x         ) - clp0_x ) / vctr_x : segLen;
                     segLen = (vctr_x >  VECTOR_COMPONENT_MIN) ? ( (int)( (int)(clp0_x) + 1.5f ) - clp0_x ) / vctr_x : segLen;
@@ -304,7 +244,7 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
                     clp1_x = clp0_x + vctr_x * segLen;
                     clp1_y = clp0_y + vctr_y * segLen;
 
-                    ///计算采样点///
+                    ///obtain the middle point of the segment as the texture-contributing sample///
                     samp_x = (clp0_x + clp1_x) * 0.5f;
                     samp_y = (clp0_y + clp1_y) * 0.5f;
 
@@ -314,22 +254,21 @@ void	FlowImagingLIC(int     n_xres,  int     n_yres,  float*  pVectr,  unsigned 
                     ///update the accumulated weight and the accumulated composite texture (texture x weight)///
                     W_ACUM = wgtLUT[ (int)(curLen * len2ID) ];
                     smpWgt = W_ACUM - w_acum[advDir];
-                    w_acum[advDir]  = W_ACUM;           //权重
-                    t_acum[advDir] += texVal * smpWgt;  //纹理值和
+                    w_acum[advDir]  = W_ACUM;
+                    t_acum[advDir] += texVal * smpWgt;
 
                     ///update the step counter and the "current" clip point///
-                    advcts ++;          //步数++
-                    //进入下一个位置
+                    advcts ++;
                     clp0_x = clp1_x;
                     clp0_y = clp1_y;
 
-                    ///是否超出///
+                    ///check if the streamline has gone beyond the flow field///
                     if( clp0_x < 0.0f || clp0_x >= n_xres || clp0_y < 0.0f || clp0_y >= n_yres)  break;
                 }
             }
 
             ///normalize the accumulated composite texture///
-            texVal = (t_acum[0] + t_acum[1]) / (w_acum[0] + w_acum[1]); //纹理只和 / 权重   ， 流线越长权重越大
+            texVal = (t_acum[0] + t_acum[1]) / (w_acum[0] + w_acum[1]);
 
             ///clamp the texture value against the displayable intensity range [0, 255]
             texVal = (texVal <   0.0f) ?   0.0f : texVal;
